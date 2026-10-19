@@ -1,0 +1,9 @@
+build/
+Makefile*
+*.o
+moc_*
+.qmake.stash
+gui/RedditPDF
+cli/redditpdf-cli
+*.exe
+reddit_credentials.pri
