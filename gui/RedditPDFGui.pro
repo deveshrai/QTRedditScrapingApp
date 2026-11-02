@@ -11,3 +11,6 @@ HEADERS += mainwindow.h
 SOURCES += main.cpp mainwindow.cpp
 
 win32: CONFIG += windows
+
+# App icon (source: icon/RedditPDF.svg)
+macx: ICON = $$PWD/icon/RedditPDF.icns
