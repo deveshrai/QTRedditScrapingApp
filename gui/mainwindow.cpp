@@ -28,6 +28,49 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#ifdef Q_OS_WASM
+#include "storezip.h"
+#include <emscripten/val.h>
+
+namespace {
+// Browsers can't write to a chosen folder: PDFs go to an in-memory folder and
+// are handed over as one .zip download at the end.
+const QString WASM_OUT_DIR = QStringLiteral("/tmp/redditpdf");
+
+QString storedClientId()
+{
+    const emscripten::val v = emscripten::val::global("localStorage").call<emscripten::val>("getItem", std::string("redditpdf.clientId"));
+    return v.isNull() ? QString() : QString::fromStdString(v.as<std::string>());
+}
+
+// Hands bytes to the browser as a file download (Qt's saveFileContent needs a fresh user click).
+void browserDownload(const QByteArray &data, const QString &name, const char *mime)
+{
+    using emscripten::val;
+    const val view(emscripten::typed_memory_view(size_t(data.size()), reinterpret_cast<const uint8_t *>(data.constData())));
+    const val copy = val::global("Uint8Array").new_(view);   // copies out of the (shared) wasm heap
+    val parts = val::array();
+    parts.call<void>("push", copy);
+    val opts = val::object();
+    opts.set("type", std::string(mime));
+    const val blob = val::global("Blob").new_(parts, opts);
+    const val url = val::global("URL").call<val>("createObjectURL", blob);
+    val a = val::global("document").call<val>("createElement", std::string("a"));
+    a.set("href", url);
+    a.set("download", name.toStdString());
+    val body = val::global("document")["body"];
+    body.call<void>("appendChild", a);
+    a.call<void>("click");
+    body.call<void>("removeChild", a);
+}
+
+void storeClientId(const QString &id)
+{
+    emscripten::val::global("localStorage").call<void>("setItem", std::string("redditpdf.clientId"), id.toStdString());
+}
+} // namespace
+#endif
+
 namespace {
 
 enum Column { ColCheck, ColRank, ColTitle, ColScore, ColComments, ColAuthor };
@@ -35,6 +78,21 @@ enum Column { ColCheck, ColRank, ColTitle, ColScore, ColComments, ColAuthor };
 QString elide(const QString &s, int n)
 {
     return s.left(n);
+}
+
+// Modal exec() isn't available in the browser, so there the box is shown without blocking.
+void notify(QWidget *parent, QMessageBox::Icon icon, const QString &title, const QString &text)
+{
+#ifdef Q_OS_WASM
+    auto *box = new QMessageBox(icon, title, text, QMessageBox::Ok, parent);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->open();
+#else
+    if (icon == QMessageBox::Critical)
+        QMessageBox::critical(parent, title, text);
+    else
+        QMessageBox::information(parent, title, text);
+#endif
 }
 
 } // namespace
@@ -120,6 +178,11 @@ void MainWindow::buildUi()
     auto *btnBrowse = new QPushButton(QStringLiteral("Browse…"));
     connect(btnBrowse, &QPushButton::clicked, this, &MainWindow::browse);
     grid->addWidget(btnBrowse, 2, 5);
+#ifdef Q_OS_WASM
+    edOut->setText(QStringLiteral("One .zip download when the run finishes"));
+    edOut->setEnabled(false);
+    btnBrowse->setVisible(false);
+#endif
 
     auto *opts = new QHBoxLayout;
     opts->addWidget(new QLabel(QStringLiteral("Site")));
@@ -127,6 +190,12 @@ void MainWindow::buildUi()
     cbSite->setEditable(true);
     cbSite->addItems(SITE_PRESETS);
     cbSite->setMinimumContentsLength(22);
+#ifdef Q_OS_WASM
+    cbSite->setEditable(false);
+    cbSite->clear();
+    cbSite->addItem(API_SITE);   // other sources need cookies/no CORS; only the official API works in a browser
+    cbSite->setEnabled(false);
+#endif
     cbSite->setToolTip(QStringLiteral("%1 = Reddit's official API. Or a Redlib URL (e.g. self-hosted), or old.reddit.com.").arg(API_SITE));
     connect(cbSite, &QComboBox::currentTextChanged, this, &MainWindow::onSiteChange);
     opts->addWidget(cbSite);
@@ -155,8 +224,12 @@ void MainWindow::buildUi()
     api->setContentsMargins(0, 0, 0, 0);
     api->addWidget(new QLabel(QStringLiteral("API client ID")));
     edClientId = new QLineEdit(qEnvironmentVariable("REDDIT_CLIENT_ID"));
+#ifdef Q_OS_WASM
+    edClientId->setPlaceholderText(QStringLiteral("your own app's client ID from reddit.com/prefs/apps (type: installed app)"));
+#else
     edClientId->setPlaceholderText(hasBuiltinCredentials() ? QStringLiteral("built-in app (leave empty)")
                                                            : QStringLiteral("from reddit.com/prefs/apps"));
+#endif
     api->addWidget(edClientId, 1);
     api->addWidget(new QLabel(QStringLiteral("Secret")));
     edSecret = new QLineEdit(qEnvironmentVariable("REDDIT_CLIENT_SECRET"));
@@ -318,6 +391,11 @@ QWidget *MainWindow::buildBatchTab()
 
 void MainWindow::loadSettings()
 {
+#ifdef Q_OS_WASM
+    if (edClientId->text().isEmpty())
+        edClientId->setText(storedClientId());
+    return;
+#endif
     QSettings s;
     edOut->setText(s.value(QStringLiteral("output"), edOut->text()).toString());
     cbSite->setCurrentText(s.value(QStringLiteral("site"), DEFAULT_BASE).toString());
@@ -330,6 +408,10 @@ void MainWindow::loadSettings()
 
 void MainWindow::saveSettings() const
 {
+#ifdef Q_OS_WASM
+    storeClientId(edClientId->text().trimmed());   // the secret is never stored
+    return;
+#endif
     QSettings s;
     s.setValue(QStringLiteral("output"), edOut->text());
     s.setValue(QStringLiteral("site"), cbSite->currentText());
@@ -401,7 +483,7 @@ QString MainWindow::validateSource()
     try {
         return cleanSubreddit(edSub->text());
     } catch (const ScrapeError &e) {
-        QMessageBox::critical(this, QStringLiteral("Subreddit"), e.message());
+        notify(this, QMessageBox::Critical, QStringLiteral("Subreddit"), e.message());
         return QString();
     }
 }
@@ -409,6 +491,9 @@ QString MainWindow::validateSource()
 QString MainWindow::outDir(const QString &sub) const
 {
     QString base = edOut->text().trimmed();
+#ifdef Q_OS_WASM
+    base = WASM_OUT_DIR;
+#endif
     if (base == QLatin1String("~") || base.startsWith(QLatin1String("~/")))
         base = QDir::homePath() + base.mid(1);
     const QString tag = runTag(cbSort->currentText(), cbTime->currentText(), query());
@@ -552,7 +637,7 @@ void MainWindow::downloadSelected()
         if (checked.contains(p.fullname))
             chosen.append(p);
     if (chosen.isEmpty()) {
-        QMessageBox::information(this, QStringLiteral("Nothing selected"), QStringLiteral("Tick at least one post first."));
+        notify(this, QMessageBox::Information, QStringLiteral("Nothing selected"), QStringLiteral("Tick at least one post first."));
         return;
     }
     const QString dir = outDir(sub);
@@ -577,7 +662,7 @@ void MainWindow::downloadBatch()
         n2 = rb100->isChecked() ? 100 : rb50->isChecked() ? 50 : 25;
     }
     if (n1 < 1 || n2 < n1) {
-        QMessageBox::critical(this, QStringLiteral("Range"), QStringLiteral("Range must satisfy 1 ≤ from ≤ to."));
+        notify(this, QMessageBox::Critical, QStringLiteral("Range"), QStringLiteral("Range must satisfy 1 ≤ from ≤ to."));
         return;
     }
     const QString sort = cbSort->currentText(), tf = cbTime->currentText(), q = query();
@@ -631,6 +716,16 @@ void MainWindow::downloadWith(RedditScraper &s, const QList<Post> &chosen, const
         if (i < total)
             s.sleep(s.delay());
     }
+#ifdef Q_OS_WASM
+    if (ok > 0) {
+        const QByteArray zip = storezip::zipFolder(dir);
+        const QString zipName = QFileInfo(dir).fileName() + QStringLiteral(".zip");
+        QDir(dir).removeRecursively();   // free the in-memory copy
+        QMetaObject::invokeMethod(this, [zip, zipName] { browserDownload(zip, zipName, "application/zip"); }, Qt::QueuedConnection);
+        emit workerDone(QStringLiteral("Finished: %1 saved, %2 failed → downloading %3").arg(QString::number(ok), QString::number(failed), zipName));
+        return;
+    }
+#endif
     emit workerDone(QStringLiteral("Finished: %1 saved, %2 failed → %3")
                         .arg(QString::number(ok), QString::number(failed), QDir::toNativeSeparators(dir)));
 }
@@ -647,5 +742,5 @@ void MainWindow::onError(const QString &msg)
     lblStatus->setText(QStringLiteral("Error."));
     appendLog(QStringLiteral("ERROR: ") + msg);
     setBusy(false);
-    QMessageBox::critical(this, QStringLiteral("Error"), msg);
+    notify(this, QMessageBox::Critical, QStringLiteral("Error"), msg);
 }

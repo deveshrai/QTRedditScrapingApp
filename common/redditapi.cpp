@@ -20,8 +20,13 @@
 namespace {
 
 // REDDITPDF_API_HOST / REDDITPDF_AUTH_HOST point the API at a test server or proxy.
+#ifdef REDDITPDF_TEST_HOST   // qmake TEST_HOST=...: test builds (e.g. wasm against a local mock) can't use env vars
+const QString kApiHost = QStringLiteral(REDDITPDF_TEST_HOST);
+const QString kAuthHost = QStringLiteral(REDDITPDF_TEST_HOST);
+#else
 const QString kApiHost = qEnvironmentVariable("REDDITPDF_API_HOST", QStringLiteral("https://oauth.reddit.com"));
 const QString kAuthHost = qEnvironmentVariable("REDDITPDF_AUTH_HOST", QStringLiteral("https://www.reddit.com"));
+#endif
 const QString kPublicHost = QStringLiteral("https://www.reddit.com");
 
 QString apiHelp()
@@ -107,8 +112,14 @@ void RedditScraper::ensureToken()
                                       encodeQuery(form).toUtf8(),
                                       {{"Authorization", "Basic " + basic},
                                        {"Content-Type", "application/x-www-form-urlencoded"}});
-    if (r.status == 0)
-        throw ScrapeError(QStringLiteral("Couldn't reach Reddit to get an API token (%1).").arg(r.error));
+    if (r.status == 0) {
+        QString msg = QStringLiteral("Couldn't reach Reddit to get an API token (%1).").arg(r.error);
+#ifdef Q_OS_WASM
+        // Reddit's error replies carry no CORS headers, so a browser reports a wrong client ID as a network error.
+        msg += QStringLiteral("\nCheck the client ID: Reddit's rejection of a wrong one looks like a network error in a browser.\n") + apiHelp();
+#endif
+        throw ScrapeError(msg);
+    }
     if (r.status == 401 || r.status == 403)
         throw ScrapeError(QStringLiteral("Reddit rejected the API client ID/secret (HTTP %1).\n").arg(r.status) + apiHelp());
     const QJsonObject o = QJsonDocument::fromJson(r.body).object();

@@ -7,3 +7,4 @@ gui/RedditPDF
 cli/redditpdf-cli
 *.exe
 reddit_credentials.pri
+.DS_Store

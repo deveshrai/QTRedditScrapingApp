@@ -24,6 +24,16 @@ make -j8
 
 Each `.pro` also opens on its own in Qt Creator. On macOS use `qmake` from your Qt install, and on Windows use `nmake` or `jom` in place of `make`.
 
+## Web version (WebAssembly)
+
+The same window runs in the browser: **<https://deveshrai.github.io/QTRedditScrapingApp/>**. It uses Qt 6.5 for WebAssembly (multithread kit); `web/build.sh` builds it, and the output is what the `gh-pages` branch serves.
+
+- **Bring your own Reddit app.** The page has no credentials built in (`common.pri` never reads `reddit_credentials.pri` for wasm). Create an *installed app* at <https://www.reddit.com/prefs/apps> and paste its client ID; it is kept in your browser's `localStorage` (the secret is never stored). Reddit's API answers browsers with CORS headers, so requests go straight from your browser to Reddit. A wrong client ID shows up as a generic network error, because Reddit's error replies have no CORS headers.
+- **Only the Reddit API source**: Redlib and old.reddit need cookies and don't allow browser requests.
+- **Output is one `.zip`.** Browsers can't write to a folder, so the PDFs are built in memory and downloaded together when the run finishes.
+- **Fonts**: only the DejaVu fonts Qt ships for wasm, so emoji and CJK text show as boxes.
+- **How it works.** The scraper stays blocking and runs on a `QThread` (a Web Worker). HTTP there uses Emscripten's synchronous `fetch` instead of `QNetworkAccessManager`, which doesn't work off the main thread. The code uses C++ exceptions, so the build passes `-fexceptions`. Wasm threads need a cross-origin-isolated page, and GitHub Pages can't send the headers, so `coi-serviceworker.js` adds them and reloads the page once.
+
 ## Where the posts come from
 
 Every public Redlib mirror (including the old default, safereddit.com) now sits behind a JavaScript bot check (Anubis and similar). old.reddit.com redirects to a login page, and Reddit's `.json` URLs return 403. Without a browser those checks can't be passed, and this port doesn't try to get around them. Instead it supports three sources:
