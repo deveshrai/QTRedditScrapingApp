@@ -283,7 +283,13 @@ void MainWindow::buildUi()
 
     lblStatus = new QLabel(QStringLiteral("Ready."));
     lblStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);   // long paths mustn't widen the window
-    root->addWidget(lblStatus);
+    auto *statusRow = new QHBoxLayout;   // the version stays put while the status text changes
+    statusRow->addWidget(lblStatus, 1);
+    auto *lblVersion = new QLabel(QStringLiteral("v%1").arg(APP_VERSION));
+    lblVersion->setToolTip(QStringLiteral("RedditPDF %1").arg(APP_VERSION));
+    lblVersion->setEnabled(false);   // dimmed
+    statusRow->addWidget(lblVersion, 0, Qt::AlignRight | Qt::AlignVCenter);
+    root->addLayout(statusRow);
 
     logView = new QPlainTextEdit;
     logView->setReadOnly(true);

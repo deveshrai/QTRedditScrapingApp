@@ -68,7 +68,7 @@ Reddit may require you to accept its developer terms, or approve new apps, befor
 
 - **Output folder.** The default is `<Documents>/RedditPDFs/<date>` (`yyyy-MM-dd`); `{date}` and `~` work in any output path (GUI field and `-o`). Runs still go in `r_<sub>_<tag>` folders inside it.
 - **Zip.** The GUI's *Also make a .zip* checkbox and the CLI's `--zip` bundle a run's PDFs into `<folder>.zip` next to the run folder.
-- **History (GUI).** The *History* tab keeps your last 10 batch requests (subreddit, sort, time, search, post range) across sessions. Tick any of them and press *Run selected* to run them one after another with the current options; each saves to its usual folder.
+- **History (GUI).** The *History* tab keeps your last 20 batch requests (subreddit, sort, time, search, post range) across sessions. Tick any of them and press *Run selected* to run them one after another with the current options; each saves to its usual folder.
 
 Everything else carries over unchanged: sorts, time filters, in-subreddit search, the pick and batch modes, rank-numbered file names (`NNN - Title [id].pdf`), folder names (`r_<sub>_<tag>`), `--skip-existing`, `--flat`, `-i` interactive picking, `--list`, the polite delay, retry/429 handling, cancel (one Ctrl-C stops after the current step, a second quits), and the exit codes 0/1/2/3/130.
 

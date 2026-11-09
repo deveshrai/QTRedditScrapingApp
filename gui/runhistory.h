@@ -25,7 +25,7 @@ struct RunPattern {
 
 namespace runhistory {
 
-inline constexpr int kMax = 10;
+inline constexpr int kMax = 20;
 
 inline QList<RunPattern> load()
 {
