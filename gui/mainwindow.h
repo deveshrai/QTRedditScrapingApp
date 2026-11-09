@@ -91,7 +91,7 @@ private:
     QLineEdit *edSub = nullptr, *edQuery = nullptr, *edOut = nullptr;
     QLineEdit *edClientId = nullptr, *edSecret = nullptr, *edCookie = nullptr;
     QComboBox *cbSort = nullptr, *cbTime = nullptr, *cbSite = nullptr, *cbPaper = nullptr, *cbLoadN = nullptr;
-    QCheckBox *chkHeader = nullptr, *chkComments = nullptr, *chkImages = nullptr;
+    QCheckBox *chkHeader = nullptr, *chkComments = nullptr, *chkImages = nullptr, *chkZip = nullptr;
     QWidget *apiRow = nullptr, *cookieRow = nullptr;
     QTabWidget *tabs = nullptr;
     QTreeWidget *tree = nullptr;

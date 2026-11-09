@@ -28,8 +28,9 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
-#ifdef Q_OS_WASM
 #include "storezip.h"
+
+#ifdef Q_OS_WASM
 #include <emscripten/val.h>
 
 namespace {
@@ -173,7 +174,8 @@ void MainWindow::buildUi()
     connect(edQuery, &QLineEdit::textChanged, this, &MainWindow::onQueryChange);
 
     grid->addWidget(new QLabel(QStringLiteral("Save to")), 2, 0, Qt::AlignRight);
-    edOut = new QLineEdit(QDir::homePath() + QStringLiteral("/Documents/RedditPDFs"));
+    edOut = new QLineEdit(defaultOutputDir());
+    edOut->setToolTip(QStringLiteral("\"{date}\" becomes today's date (yyyy-MM-dd) when you download."));
     grid->addWidget(edOut, 2, 1, 1, 4);
     auto *btnBrowse = new QPushButton(QStringLiteral("Browse…"));
     connect(btnBrowse, &QPushButton::clicked, this, &MainWindow::browse);
@@ -215,6 +217,12 @@ void MainWindow::buildUi()
     chkImages->setToolTip(QStringLiteral("Download post images into the PDF (otherwise they become links)"));
     chkImages->setChecked(true);
     opts->addWidget(chkImages);
+    chkZip = new QCheckBox(QStringLiteral("Also make a .zip"));
+    chkZip->setToolTip(QStringLiteral("Bundle the PDFs of this run into <folder>.zip, next to the folder"));
+    opts->addWidget(chkZip);
+#ifdef Q_OS_WASM
+    chkZip->setVisible(false);   // the browser build always downloads a zip
+#endif
     opts->addStretch();
     grid->addLayout(opts, 3, 0, 1, 6);
 
@@ -397,7 +405,10 @@ void MainWindow::loadSettings()
     return;
 #endif
     QSettings s;
-    edOut->setText(s.value(QStringLiteral("output"), edOut->text()).toString());
+    const QString savedOut = s.value(QStringLiteral("output")).toString();
+    if (!savedOut.isEmpty() && QDir::cleanPath(savedOut) != QDir::homePath() + QStringLiteral("/Documents/RedditPDFs"))
+        edOut->setText(savedOut);   // the old fixed default gives way to the dated one
+    chkZip->setChecked(s.value(QStringLiteral("zip"), false).toBool());
     cbSite->setCurrentText(s.value(QStringLiteral("site"), DEFAULT_BASE).toString());
     cbPaper->setCurrentText(s.value(QStringLiteral("paper"), QStringLiteral("Letter")).toString());
     if (edClientId->text().isEmpty())
@@ -414,6 +425,7 @@ void MainWindow::saveSettings() const
 #endif
     QSettings s;
     s.setValue(QStringLiteral("output"), edOut->text());
+    s.setValue(QStringLiteral("zip"), chkZip->isChecked());
     s.setValue(QStringLiteral("site"), cbSite->currentText());
     s.setValue(QStringLiteral("paper"), cbPaper->currentText());
     s.setValue(QStringLiteral("clientId"), edClientId->text());
@@ -458,7 +470,10 @@ void MainWindow::onSiteChange()
 
 void MainWindow::browse()
 {
-    const QString d = QFileDialog::getExistingDirectory(this, QString(), edOut->text().isEmpty() ? QDir::homePath() : edOut->text());
+    QString start = expandOutputDir(edOut->text());   // today's folder may not exist yet: start at its parent
+    while (!QDir(start).exists() && start != QDir::rootPath())
+        start = QFileInfo(start).absolutePath();
+    const QString d = QFileDialog::getExistingDirectory(this, QString(), start);
     if (!d.isEmpty())
         edOut->setText(QDir::toNativeSeparators(d));
 }
@@ -490,12 +505,10 @@ QString MainWindow::validateSource()
 
 QString MainWindow::outDir(const QString &sub) const
 {
-    QString base = edOut->text().trimmed();
+    QString base = expandOutputDir(edOut->text());
 #ifdef Q_OS_WASM
     base = WASM_OUT_DIR;
 #endif
-    if (base == QLatin1String("~") || base.startsWith(QLatin1String("~/")))
-        base = QDir::homePath() + base.mid(1);
     const QString tag = runTag(cbSort->currentText(), cbTime->currentText(), query());
     return QDir(base).filePath(QStringLiteral("r_%1_%2").arg(sub, tag));
 }
@@ -517,6 +530,7 @@ SaveOptions MainWindow::saveOptions() const
     o.headerFooter = chkHeader->isChecked();
     o.manyComments = chkComments->isChecked();
     o.images = chkImages->isChecked();
+    o.zip = chkZip->isChecked();
     return o;
 }
 
@@ -726,8 +740,16 @@ void MainWindow::downloadWith(RedditScraper &s, const QList<Post> &chosen, const
         return;
     }
 #endif
+    QString where = QDir::toNativeSeparators(dir);
+    if (save.zip && ok > 0) {
+        const QString zip = storezip::writeZip(dir);
+        if (zip.isEmpty())
+            emit workerLog(QStringLiteral("✘ Couldn't write the .zip"));
+        else
+            where += QStringLiteral("  (+ %1)").arg(QFileInfo(zip).fileName());
+    }
     emit workerDone(QStringLiteral("Finished: %1 saved, %2 failed → %3")
-                        .arg(QString::number(ok), QString::number(failed), QDir::toNativeSeparators(dir)));
+                        .arg(QString::number(ok), QString::number(failed), where));
 }
 
 void MainWindow::onDone(const QString &msg)

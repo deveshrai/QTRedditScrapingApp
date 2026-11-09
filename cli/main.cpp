@@ -16,6 +16,8 @@
 #include <QRegularExpression>
 #include <QTextStream>
 
+#include "storezip.h"
+
 #include <algorithm>
 #include <atomic>
 #include <csignal>
@@ -221,7 +223,9 @@ site:
                               session (default: $REDDIT_COOKIE)
 
 output:
-  -o, --output DIR            folder for the PDFs (default: ~/Documents/RedditPDFs)
+  -o, --output DIR            folder for the PDFs (default: <Documents>/RedditPDFs/<date>);
+                              "{date}" in DIR becomes today as yyyy-MM-dd, "~" is your home
+  --zip                       also bundle the PDFs of this run into <folder>.zip
   --flat                      write PDFs straight into DIR instead of DIR/r_<sub>_<sort>/
   --paper {Letter,A4}         page size (default: Letter)
   --no-header-footer          leave out the date/title/URL/page-number header and footer
@@ -367,7 +371,8 @@ int run(const QStringList &arguments)
     const QCommandLineOption oClientId(QStringList{"client-id"}, QString(), "ID", qEnvironmentVariable("REDDIT_CLIENT_ID"));
     const QCommandLineOption oClientSecret(QStringList{"client-secret"}, QString(), "SECRET", qEnvironmentVariable("REDDIT_CLIENT_SECRET"));
     const QCommandLineOption oCookie(QStringList{"cookie"}, QString(), "STRING", qEnvironmentVariable("REDDIT_COOKIE"));
-    const QCommandLineOption oOutput(QStringList{"o", "output"}, QString(), "DIR", QDir::homePath() + "/Documents/RedditPDFs");
+    const QCommandLineOption oOutput(QStringList{"o", "output"}, QString(), "DIR", defaultOutputDir());
+    const QCommandLineOption oZip("zip");
     const QCommandLineOption oFlat("flat");
     const QCommandLineOption oPaper(QStringList{"paper"}, QString(), "PAPER", "Letter");
     const QCommandLineOption oNoHeader("no-header-footer");
@@ -390,7 +395,7 @@ int run(const QStringList &arguments)
 
     p.addOptions({oSearch, oSort, oTime, oCount, oRange, oPick, oInteractive, oLoad, oList, oSite, oApi,
                   oOld, oSiteMode, oClientId, oClientSecret, oCookie, oOutput, oFlat, oPaper, oNoHeader,
-                  oMany, oNoImages, oSkip, oUserAgent, oWait, oDebug, oDelay, oQuiet, oVerbose, oVersion,
+                  oMany, oNoImages, oZip, oSkip, oUserAgent, oWait, oDebug, oDelay, oQuiet, oVerbose, oVersion,
                   oHelp, oShow, oBrowser, oChrome, oWindow});
 
     if (!p.parse(arguments))
@@ -509,10 +514,7 @@ int run(const QStringList &arguments)
     std::signal(SIGINT, onSigint);
 
     const QString tag = runTag(sort, tf, query);
-    QString outDir = p.value(oOutput);
-    if (outDir.startsWith(QLatin1String("~/")) || outDir == QLatin1String("~"))
-        outDir = QDir::homePath() + outDir.mid(1);
-    outDir = QDir(outDir).absolutePath();
+    QString outDir = expandOutputDir(p.value(oOutput));
     if (!p.isSet(oFlat))
         outDir = QDir(outDir).filePath(QStringLiteral("r_%1_%2").arg(sub, tag));
 
@@ -632,6 +634,13 @@ int run(const QStringList &arguments)
     if (skipped)
         summary += QStringLiteral(", %1 skipped").arg(skipped);
     print(QStringLiteral("%1. Folder: %2").arg(summary, outDir));
+    if (p.isSet(oZip)) {
+        const QString zip = storezip::writeZip(outDir);
+        if (zip.isEmpty())
+            eprint(QStringLiteral("warning: no zip made (no PDFs in %1, or it couldn't be written).").arg(outDir));
+        else
+            print(QStringLiteral("Zip: %1").arg(zip));
+    }
     return failed ? EXIT_PARTIAL : EXIT_OK;
 }
 

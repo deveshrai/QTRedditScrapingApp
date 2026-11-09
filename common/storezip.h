@@ -33,7 +33,7 @@ inline quint32 crc32(const QByteArray &data)
 inline void put16(QByteArray &o, quint16 v) { o.append(char(v & 0xFF)).append(char(v >> 8)); }
 inline void put32(QByteArray &o, quint32 v) { put16(o, quint16(v & 0xFFFF)); put16(o, quint16(v >> 16)); }
 
-// Zips the regular files directly inside `dir`, stored under "<folder name>/<file>".
+// Zips the PDFs directly inside `dir`, stored under "<folder name>/<file>".
 inline QByteArray zipFolder(const QString &dir)
 {
     const QDateTime now = QDateTime::currentDateTime();
@@ -43,7 +43,7 @@ inline QByteArray zipFolder(const QString &dir)
 
     QByteArray out, central;
     quint16 count = 0;
-    for (const QFileInfo &fi : QDir(dir).entryInfoList(QDir::Files, QDir::Name)) {
+    for (const QFileInfo &fi : QDir(dir).entryInfoList({QStringLiteral("*.pdf")}, QDir::Files, QDir::Name)) {
         QFile f(fi.filePath());
         if (!f.open(QIODevice::ReadOnly))
             continue;
@@ -70,6 +70,21 @@ inline QByteArray zipFolder(const QString &dir)
     put32(out, 0x06054b50); put16(out, 0); put16(out, 0); put16(out, count); put16(out, count);
     put32(out, quint32(central.size())); put32(out, centralOffset); put16(out, 0);
     return out;
+}
+
+// Writes "<dir>.zip" next to the folder (replacing an older one). Returns its path, or "" when
+// there was nothing to zip or the file couldn't be written.
+inline QString writeZip(const QString &dir)
+{
+    const QString dest = QDir::cleanPath(dir) + QStringLiteral(".zip");
+    if (QDir(dir).entryList({QStringLiteral("*.pdf")}, QDir::Files).isEmpty())
+        return QString();
+    QFile f(dest);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return QString();
+    const bool ok = f.write(zipFolder(dir)) >= 0;
+    f.close();
+    return ok ? dest : QString();
 }
 
 } // namespace storezip

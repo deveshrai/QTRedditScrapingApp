@@ -13,7 +13,9 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QRegularExpression>
+#include <QDate>
 #include <QSet>
+#include <QStandardPaths>
 #include <QThread>
 
 #include <algorithm>
@@ -160,6 +162,21 @@ QString pdfFileName(const Post &post)
 {
     return QStringLiteral("%1 - %2 [%3].pdf")
         .arg(QStringLiteral("%1").arg(post.rank, 3, 10, QLatin1Char('0')), safeFilename(post.title), post.id());
+}
+
+QString defaultOutputDir()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
+           + QStringLiteral("/RedditPDFs/{date}");
+}
+
+QString expandOutputDir(const QString &dir)
+{
+    QString d = dir.trimmed();
+    if (d == QLatin1String("~") || d.startsWith(QLatin1String("~/")))
+        d = QDir::homePath() + d.mid(1);
+    d.replace(QStringLiteral("{date}"), QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")));
+    return QDir(d).absolutePath();
 }
 
 bool hasBuiltinCredentials()

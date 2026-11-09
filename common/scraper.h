@@ -23,7 +23,7 @@
 #include <functional>
 #include <memory>
 
-inline const QString APP_VERSION = QStringLiteral("1.0");
+inline const QString APP_VERSION = QStringLiteral("1.1");
 
 inline const QString API_SITE = QStringLiteral("reddit-api");
 inline const QString DEFAULT_BASE = API_SITE;
@@ -94,6 +94,7 @@ struct SaveOptions {
     bool headerFooter = true;     // date / title / URL / page number
     bool manyComments = false;    // up to 500 comments (old.reddit and API)
     bool images = true;           // download and embed post images
+    bool zip = false;             // front-ends: also bundle the run's PDFs into <folder>.zip
 };
 
 // helpers ------------------------------------------------------------------
@@ -106,6 +107,10 @@ QString listingUrl(const QString &base, const QString &mode, const QString &sub,
                    const QString &after = QString(), const QString &query = QString());
 QString runTag(const QString &sort, const QString &timeFilter, const QString &query = QString());
 QString pdfFileName(const Post &post);
+// Default output folder: <Documents>/RedditPDFs/{date}. "{date}" is today as yyyy-MM-dd.
+QString defaultOutputDir();
+// Expands "~" and "{date}" in a user-typed output folder and makes it absolute.
+QString expandOutputDir(const QString &dir);
 // k=v&k=v with every value fully percent-encoded (spaces as '+').
 QString encodeQuery(const QList<QPair<QString, QString>> &items);
 // True when reddit_credentials.pri supplied API credentials at build time.

@@ -26,7 +26,8 @@ HEADERS += \
     $$PWD/htmldom.h \
     $$PWD/http.h \
     $$PWD/pdfrenderer.h \
-    $$PWD/scraper.h
+    $$PWD/scraper.h \
+    $$PWD/storezip.h
 
 SOURCES += \
     $$PWD/htmldom.cpp \
