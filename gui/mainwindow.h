@@ -1,6 +1,7 @@
 #pragma once
 // mainwindow.h - the Reddit -> PDF window (Qt Widgets port of main.py).
 
+#include "runhistory.h"
 #include "scraper.h"
 
 #include <QMainWindow>
@@ -51,6 +52,10 @@ private:
     void buildUi();
     QWidget *buildPickTab();
     QWidget *buildBatchTab();
+    QWidget *buildHistoryTab();
+    void refreshHistory();
+    void rememberRun(const RunPattern &p);
+    void runHistory();
     void loadSettings();
     void saveSettings() const;
 
@@ -64,6 +69,7 @@ private:
     void setBusy(bool busy);
     QString validateSource();
     QString outDir(const QString &sub) const;
+    QString outDir(const QString &sub, const QString &sort, const QString &tf, const QString &q) const;
     ScraperOptions scraperOptions() const;
     SaveOptions saveOptions() const;
     void startWorker(std::function<void()> job);
@@ -82,6 +88,9 @@ private:
 
     // worker-thread code: talks to the UI only through the worker* signals
     RedditScraper::LogFn workerLogger();
+    struct Tally { int ok = 0, failed = 0; };
+    Tally downloadFolder(RedditScraper &s, const QList<Post> &chosen, const QString &dir, const SaveOptions &save);
+    QString zipNote(const QString &dir, const SaveOptions &save, int ok);   // "  (+ x.zip)" or ""
     void downloadWith(RedditScraper &s, const QList<Post> &chosen, const QString &dir, const SaveOptions &save);
 
     void onDone(const QString &msg);
@@ -94,9 +103,9 @@ private:
     QCheckBox *chkHeader = nullptr, *chkComments = nullptr, *chkImages = nullptr, *chkZip = nullptr;
     QWidget *apiRow = nullptr, *cookieRow = nullptr;
     QTabWidget *tabs = nullptr;
-    QTreeWidget *tree = nullptr;
+    QTreeWidget *tree = nullptr, *histTree = nullptr;
     QLabel *lblSel = nullptr, *lblStatus = nullptr;
-    QPushButton *btnLoad = nullptr, *btnDlSel = nullptr, *btnBatch = nullptr, *btnCancel = nullptr;
+    QPushButton *btnLoad = nullptr, *btnDlSel = nullptr, *btnBatch = nullptr, *btnCancel = nullptr, *btnRunHist = nullptr;
     QRadioButton *rb25 = nullptr, *rb50 = nullptr, *rb100 = nullptr, *rbCustom = nullptr;
     QSpinBox *spFrom = nullptr, *spTo = nullptr;
     QProgressBar *progress = nullptr;
@@ -105,6 +114,7 @@ private:
     // state
     bool sortTouched = false, timeTouched = false;
     QList<Post> posts;
+    QList<RunPattern> history;
     QPointer<QThread> worker;
     std::atomic_bool cancelFlag{false};
 };

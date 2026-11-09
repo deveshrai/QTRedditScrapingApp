@@ -23,7 +23,7 @@
 #include <functional>
 #include <memory>
 
-inline const QString APP_VERSION = QStringLiteral("1.1");
+inline const QString APP_VERSION = QStringLiteral("1.2");
 
 inline const QString API_SITE = QStringLiteral("reddit-api");
 inline const QString DEFAULT_BASE = API_SITE;

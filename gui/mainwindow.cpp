@@ -109,6 +109,8 @@ MainWindow::MainWindow()
 
     buildUi();
     loadSettings();
+    history = runhistory::load();
+    refreshHistory();
     onQueryChange();
     onSiteChange();
 
@@ -262,6 +264,9 @@ void MainWindow::buildUi()
     tabs = new QTabWidget;
     tabs->addTab(buildPickTab(), QStringLiteral("  Pick posts from a list  "));
     tabs->addTab(buildBatchTab(), QStringLiteral("  Automatic batch  "));
+#ifndef Q_OS_WASM
+    tabs->addTab(buildHistoryTab(), QStringLiteral("  History  "));
+#endif
     root->addWidget(tabs, 1);
 
     // --- progress / log -------------------------------------------------
@@ -397,6 +402,147 @@ QWidget *MainWindow::buildBatchTab()
     return tab;
 }
 
+QWidget *MainWindow::buildHistoryTab()
+{
+    auto *tab = new QWidget;
+    auto *v = new QVBoxLayout(tab);
+    v->setContentsMargins(12, 12, 12, 12);
+    auto *intro = new QLabel(QStringLiteral("Your last %1 batch requests. Tick any of them and run them together; "
+                                            "each saves to its usual folder, using the options set above.").arg(runhistory::kMax));
+    intro->setWordWrap(true);
+    v->addWidget(intro);
+
+    histTree = new QTreeWidget;
+    histTree->setRootIsDecorated(false);
+    histTree->setHeaderLabels({QString(), QStringLiteral("Subreddit"), QStringLiteral("Sort"), QStringLiteral("Search"),
+                               QStringLiteral("Posts"), QStringLiteral("Last used")});
+    histTree->setAlternatingRowColors(true);
+    histTree->header()->setStretchLastSection(false);
+    histTree->header()->setSectionResizeMode(3, QHeaderView::Stretch);
+    histTree->setColumnWidth(0, 34);
+    histTree->setColumnWidth(1, 150);
+    histTree->setColumnWidth(2, 130);
+    histTree->setColumnWidth(4, 80);
+    histTree->setColumnWidth(5, 140);
+    v->addWidget(histTree, 1);
+
+    auto *row = new QHBoxLayout;
+    auto *btnAll = new QPushButton(QStringLiteral("Select all"));
+    auto *btnNone = new QPushButton(QStringLiteral("Select none"));
+    auto *btnRemove = new QPushButton(QStringLiteral("Remove selected"));
+    const auto setChecks = [this](bool on) {
+        for (int i = 0; i < histTree->topLevelItemCount(); ++i)
+            histTree->topLevelItem(i)->setCheckState(0, on ? Qt::Checked : Qt::Unchecked);
+    };
+    connect(btnAll, &QPushButton::clicked, this, [=] { setChecks(true); });
+    connect(btnNone, &QPushButton::clicked, this, [=] { setChecks(false); });
+    connect(btnRemove, &QPushButton::clicked, this, [this] {
+        for (int i = histTree->topLevelItemCount() - 1; i >= 0; --i)
+            if (histTree->topLevelItem(i)->checkState(0) == Qt::Checked)
+                history.removeAt(histTree->topLevelItem(i)->data(0, Qt::UserRole).toInt());
+        runhistory::save(history);
+        refreshHistory();
+    });
+    row->addWidget(btnAll);
+    row->addWidget(btnNone);
+    row->addWidget(btnRemove);
+    row->addStretch();
+    btnRunHist = new QPushButton(QStringLiteral("Run selected"));
+    btnRunHist->setToolTip(QStringLiteral("Run the ticked requests one after another"));
+    connect(btnRunHist, &QPushButton::clicked, this, &MainWindow::runHistory);
+    row->addWidget(btnRunHist);
+    v->addLayout(row);
+    return tab;
+}
+
+void MainWindow::refreshHistory()
+{
+    if (!histTree)
+        return;
+    histTree->clear();
+    for (int i = 0; i < history.size(); ++i) {
+        const RunPattern &p = history[i];
+        const bool timed = !p.query.isEmpty() || TIMED_SORTS.contains(p.sort);
+        auto *it = new QTreeWidgetItem(histTree);
+        it->setCheckState(0, Qt::Unchecked);
+        it->setData(0, Qt::UserRole, i);
+        it->setText(1, QStringLiteral("r/") + p.sub);
+        it->setText(2, timed ? QStringLiteral("%1 · %2").arg(p.sort, p.timeFilter) : p.sort);
+        it->setText(3, p.query);
+        it->setText(4, p.from == 1 ? QString::number(p.to) : QStringLiteral("%1–%2").arg(p.from).arg(p.to));
+        it->setText(5, p.lastUsed.toString(QStringLiteral("yyyy-MM-dd HH:mm")));
+    }
+}
+
+void MainWindow::rememberRun(const RunPattern &p)
+{
+    runhistory::remember(history, p);
+    runhistory::save(history);
+    refreshHistory();
+}
+
+void MainWindow::runHistory()
+{
+    QList<RunPattern> picked;
+    for (int i = 0; i < histTree->topLevelItemCount(); ++i) {
+        const QTreeWidgetItem *it = histTree->topLevelItem(i);
+        if (it->checkState(0) == Qt::Checked)
+            picked.append(history[it->data(0, Qt::UserRole).toInt()]);
+    }
+    if (picked.isEmpty()) {
+        notify(this, QMessageBox::Information, QStringLiteral("Nothing selected"), QStringLiteral("Tick at least one request first."));
+        return;
+    }
+    QStringList dirs;
+    for (const RunPattern &p : picked)
+        dirs << outDir(p.sub, p.sort, p.timeFilter, p.query);
+    const ScraperOptions so = scraperOptions();
+    const SaveOptions save = saveOptions();
+    for (int i = picked.size() - 1; i >= 0; --i)   // keep their relative order at the top
+        rememberRun(picked[i]);
+
+    startWorker([=] {
+        RedditScraper s(so, workerLogger(), &cancelFlag);
+        int ok = 0, failed = 0, brokenRuns = 0;
+        for (int i = 0; i < picked.size(); ++i) {
+            if (cancelFlag)
+                throw Cancelled();
+            const RunPattern &p = picked[i];
+            const QString what = QStringLiteral("r/%1 %2%3 (%4–%5)")
+                                     .arg(p.sub, p.sort, p.query.isEmpty() ? QString() : QStringLiteral(" \"%1\"").arg(p.query))
+                                     .arg(p.from).arg(p.to);
+            emit workerLog(QStringLiteral("── Request %1/%2: %3").arg(i + 1).arg(picked.size()).arg(what));
+            emit workerStatus(QStringLiteral("Request %1/%2: fetching listing…").arg(i + 1).arg(picked.size()));
+            try {
+                const QList<Post> found = s.fetchPosts(p.sub, p.sort, p.timeFilter, p.to,
+                                                       [this](int a, int b) { emit workerProgress(a, b); }, p.query);
+                const QList<Post> chosen = found.mid(p.from - 1, p.to - p.from + 1);
+                if (chosen.isEmpty())
+                    throw ScrapeError(QStringLiteral("r/%1 only has %2 posts; nothing in %3–%4.")
+                                          .arg(p.sub).arg(found.size()).arg(p.from).arg(p.to));
+                const Tally t = downloadFolder(s, chosen, dirs[i], save);
+                ok += t.ok;
+                failed += t.failed;
+                emit workerLog(QStringLiteral("   → %1%2").arg(QDir::toNativeSeparators(dirs[i]), zipNote(dirs[i], save, t.ok)));
+            } catch (const Cancelled &) {
+                throw;
+            } catch (const ScrapeError &e) {
+                emit workerLog(QStringLiteral("✘ %1 — %2").arg(what, e.message()));
+                ++brokenRuns;
+            } catch (const std::exception &e) {
+                emit workerLog(QStringLiteral("✘ %1 — %2").arg(what, QString::fromLocal8Bit(e.what())));
+                ++brokenRuns;
+            }
+            if (i + 1 < picked.size())
+                s.sleep(s.delay());
+        }
+        emit workerDone(QStringLiteral("Finished %1 request%2: %3 saved, %4 failed%5")
+                            .arg(picked.size()).arg(picked.size() == 1 ? "" : "s").arg(ok).arg(failed)
+                            .arg(brokenRuns ? QStringLiteral(", %1 request%2 couldn't be loaded").arg(brokenRuns).arg(brokenRuns == 1 ? "" : "s")
+                                            : QString()));
+    });
+}
+
 void MainWindow::loadSettings()
 {
 #ifdef Q_OS_WASM
@@ -486,8 +632,9 @@ void MainWindow::appendLog(const QString &msg)
 
 void MainWindow::setBusy(bool busy)
 {
-    for (QPushButton *b : {btnLoad, btnDlSel, btnBatch})
-        b->setEnabled(!busy);
+    for (QPushButton *b : {btnLoad, btnDlSel, btnBatch, btnRunHist})
+        if (b)
+            b->setEnabled(!busy);
     btnCancel->setEnabled(busy);
     if (!busy)
         progress->setValue(0);
@@ -505,12 +652,16 @@ QString MainWindow::validateSource()
 
 QString MainWindow::outDir(const QString &sub) const
 {
+    return outDir(sub, cbSort->currentText(), cbTime->currentText(), query());
+}
+
+QString MainWindow::outDir(const QString &sub, const QString &sort, const QString &tf, const QString &q) const
+{
     QString base = expandOutputDir(edOut->text());
 #ifdef Q_OS_WASM
     base = WASM_OUT_DIR;
 #endif
-    const QString tag = runTag(cbSort->currentText(), cbTime->currentText(), query());
-    return QDir(base).filePath(QStringLiteral("r_%1_%2").arg(sub, tag));
+    return QDir(base).filePath(QStringLiteral("r_%1_%2").arg(sub, runTag(sort, tf, q)));
 }
 
 ScraperOptions MainWindow::scraperOptions() const
@@ -683,6 +834,14 @@ void MainWindow::downloadBatch()
     const QString dir = outDir(sub);
     const ScraperOptions so = scraperOptions();
     const SaveOptions save = saveOptions();
+    RunPattern pattern;
+    pattern.sub = sub;
+    pattern.sort = sort;
+    pattern.timeFilter = tf;
+    pattern.query = q;
+    pattern.from = n1;
+    pattern.to = n2;
+    rememberRun(pattern);
     startWorker([=] {
         RedditScraper s(so, workerLogger(), &cancelFlag);
         emit workerStatus(QStringLiteral("Fetching listing up to post %1…").arg(n2));
@@ -702,7 +861,7 @@ RedditScraper::LogFn MainWindow::workerLogger()
     return [this](const QString &msg) { emit workerLog(msg); };
 }
 
-void MainWindow::downloadWith(RedditScraper &s, const QList<Post> &chosen, const QString &dir, const SaveOptions &save)
+MainWindow::Tally MainWindow::downloadFolder(RedditScraper &s, const QList<Post> &chosen, const QString &dir, const SaveOptions &save)
 {
     const int total = chosen.size();
     int ok = 0, failed = 0;
@@ -730,6 +889,25 @@ void MainWindow::downloadWith(RedditScraper &s, const QList<Post> &chosen, const
         if (i < total)
             s.sleep(s.delay());
     }
+    return {ok, failed};
+}
+
+QString MainWindow::zipNote(const QString &dir, const SaveOptions &save, int ok)
+{
+    if (!save.zip || ok <= 0)
+        return QString();
+    const QString zip = storezip::writeZip(dir);
+    if (zip.isEmpty()) {
+        emit workerLog(QStringLiteral("✘ Couldn't write the .zip"));
+        return QString();
+    }
+    return QStringLiteral("  (+ %1)").arg(QFileInfo(zip).fileName());
+}
+
+void MainWindow::downloadWith(RedditScraper &s, const QList<Post> &chosen, const QString &dir, const SaveOptions &save)
+{
+    const Tally t = downloadFolder(s, chosen, dir, save);
+    const int ok = t.ok, failed = t.failed;
 #ifdef Q_OS_WASM
     if (ok > 0) {
         const QByteArray zip = storezip::zipFolder(dir);
@@ -740,16 +918,8 @@ void MainWindow::downloadWith(RedditScraper &s, const QList<Post> &chosen, const
         return;
     }
 #endif
-    QString where = QDir::toNativeSeparators(dir);
-    if (save.zip && ok > 0) {
-        const QString zip = storezip::writeZip(dir);
-        if (zip.isEmpty())
-            emit workerLog(QStringLiteral("✘ Couldn't write the .zip"));
-        else
-            where += QStringLiteral("  (+ %1)").arg(QFileInfo(zip).fileName());
-    }
-    emit workerDone(QStringLiteral("Finished: %1 saved, %2 failed → %3")
-                        .arg(QString::number(ok), QString::number(failed), where));
+    emit workerDone(QStringLiteral("Finished: %1 saved, %2 failed → %3%4")
+                        .arg(QString::number(ok), QString::number(failed), QDir::toNativeSeparators(dir), zipNote(dir, save, ok)));
 }
 
 void MainWindow::onDone(const QString &msg)

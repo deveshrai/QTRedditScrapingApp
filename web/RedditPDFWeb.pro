@@ -10,7 +10,7 @@ QT      += widgets
 include(../common/common.pri)
 
 INCLUDEPATH += ../gui
-HEADERS += ../gui/mainwindow.h
+HEADERS += ../gui/mainwindow.h ../gui/runhistory.h
 SOURCES += ../gui/main.cpp ../gui/mainwindow.cpp
 
 # the scrape runs on a QThread; each thread is a Web Worker from this pool

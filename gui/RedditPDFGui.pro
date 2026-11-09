@@ -7,7 +7,7 @@ QT      += widgets
 
 include(../common/common.pri)
 
-HEADERS += mainwindow.h
+HEADERS += mainwindow.h runhistory.h
 SOURCES += main.cpp mainwindow.cpp
 
 win32: CONFIG += windows
